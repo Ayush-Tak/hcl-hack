@@ -26,6 +26,7 @@ Why we built it this way. Each entry: what we chose, what else we considered and
 | D-20 | Span-level trace with a hash-chained audit | active |
 | D-21 | Stateless API on Cloud Run, production stores named but not built | active |
 | D-22 | Engine as a Python interface, three owners | active |
+| D-23 | Constant-response login lockout after 5 failed PINs | active |
 
 ## D-01: Banking over Library and Hospital
 
@@ -260,3 +261,14 @@ Why we built it this way. Each entry: what we chose, what else we considered and
 - **Trade-off accepted:** any change to the interface has to go through ENGINE.md and the team.
 - **Evidence:** assumption, verify by teammate 2 running the routes against an engine stub by 14:45.
 - **Judge line:** "One small interface between the AI engine and the web app, so three people could build in parallel."
+
+## D-23: Constant-response login lockout after 5 failed PINs
+
+- **When / where:** sprint 2, 14:50, Ayushi
+- **Context:** prevent PIN brute-forcing while stopping customer enumeration.
+- **Decision:** after 5 consecutive failed PINs, lock the customer ID for 15 minutes in a database table. In all failure modes (unknown ID, wrong PIN, or locked account), return HTTP 401 with identical error message "Invalid customer ID or PIN".
+- **Alternatives considered:**
+  - Distinct "Account locked" error: leaks valid customer IDs and reveals lockout state to attackers.
+  - In-memory rate limiting: resets on server reload and fails across multiple workers.
+- **Trade-off accepted:** a locked customer must wait out the 15-minute window or contact an officer.
+- **Judge line:** "Identical failure responses and persistent lockout stop both brute-force attacks and account enumeration."
