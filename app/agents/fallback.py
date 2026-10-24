@@ -20,7 +20,10 @@ INTENTS = [
     ("lost_card", r"\b(lost|stolen|missing)\b.*\bcard\b|\bblock\b.*\bcard\b"),
     ("fraud", r"(don'?t|do not) recogni[sz]e|not me|suspicious|fraud|unauthori[sz]ed"),
     ("transfer", r"\b(send|transfer|pay)\b"),
-    ("policy", r"\b(fee|fees|charge|charges|policy|penalty|interest rate)\b"),
+    (
+        "policy",
+        r"\b(fees?|charges?|policy|penalty|interest rate|compensation|ombudsman|liability|how long|timelines?)\b",
+    ),
     ("balance", r"\bbalance\b"),
 ]
 
@@ -75,9 +78,11 @@ def _fraud(ctx: Ctx, message: str) -> str:
         return (
             "I couldn't find that transaction. Could you give the amount or merchant?"
         )
+    # The model's own "Model: ..." reasons repeat the rules in other words; they stay in the alert for reviewers.
+    reasons = [r for r in check["reasons"] if not r.startswith("Model:")]
     text = (
         f"The {format_inr(check['amount'])} payment to {check['merchant']} has a {check['band']} fraud risk "
-        f"(score {check['score']}): {'; '.join(check['reasons']) or 'nothing unusual'}."
+        f"(score {check['score']}): {'; '.join(reasons) or 'nothing unusual'}."
     )
     if check["band"] == "low":
         return text
