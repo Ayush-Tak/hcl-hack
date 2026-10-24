@@ -228,6 +228,9 @@ def transfer_money(ctx: Ctx, args: dict) -> dict:
     upi_id = saved["upi_id"] if saved else payee
     if not _UPI_ID.match(upi_id):
         return {"error": "Please give a UPI ID like name@bank, or a saved payee's name"}
+    balance = _balance(ctx.customer_id)
+    if amount > balance:
+        return {"error": f"Not enough balance: {format_inr(balance)} available"}
     check = pre_payment_check(
         ctx.customer_id, upi_id, amount, ctx.session.get("scam_risk") == "high"
     )
@@ -326,13 +329,22 @@ def _debit(customer_id: str, account_id: str, args: dict) -> str | None:
     return txn_id
 
 
+def _balance(customer_id: str) -> int:
+    return db.one("SELECT balance FROM accounts WHERE customer_id = ?", (customer_id,))[
+        "balance"
+    ]
+
+
 @executor("transfer")
 def execute_transfer(customer_id: str, args: dict, trace_id: str) -> dict:
     held = _hold_at_confirm(customer_id, args, trace_id)
     if held:
         return held
     if args["cooling_off"]:
-        # No money moves yet; the debit (with the same balance check) happens at release.
+        # No money moves yet, but we won't schedule what the account can't cover today.
+        balance = _balance(customer_id)
+        if balance < args["amount"]:
+            return {"error": f"Not enough balance: {format_inr(balance)} available"}
         release_at = (datetime.now() + COOLING_OFF).isoformat(timespec="seconds")
         return {
             "status": "scheduled",
