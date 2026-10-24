@@ -71,9 +71,17 @@ def load_sections(folder: Path) -> list[dict]:
     return sections
 
 
+def _stem(word: str) -> str:
+    # Crude, but enough for "delayed" to match "delay" and "refunds" to match "refund".
+    for suffix in ("ing", "ed", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            return word[: -len(suffix)]
+    return word
+
+
 def _words(text: str) -> set[str]:
     return {
-        w
+        _stem(w)
         for w in re.findall(r"[a-z0-9]+", text.lower())
         if w not in STOPWORDS and len(w) > 2
     }
@@ -87,15 +95,21 @@ def _words(text: str) -> set[str]:
 )
 def search_policy(ctx: Ctx, args: dict) -> dict:
     query = _words(args["query"])
-    scored = [
+    # A section matches only if MIN_MATCHES different question words appear in it. Among matches,
+    # title words count twice, so "compensation" beats a long section that just mentions UPI more.
+    matches = [
         (len(query & _words(s["section"] + " " + s["text"])), s)
         for s in load_sections(settings.policies_dir)
     ]
-    hits = [
-        s
-        for score, s in sorted(scored, key=lambda pair: -pair[0])
-        if score >= MIN_MATCHES
-    ][:3]
+    ranked = sorted(
+        (
+            (count + len(query & _words(s["section"])), s)
+            for count, s in matches
+            if count >= MIN_MATCHES
+        ),
+        key=lambda pair: -pair[0],
+    )
+    hits = [s for _, s in ranked][:3]
     if not hits:
         return {
             "not_found": "No policy section matches this question",

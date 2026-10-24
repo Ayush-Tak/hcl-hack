@@ -143,3 +143,13 @@ def test_verifier_reads_indian_grouping_and_rupee_sign() -> None:
     assert verifier.unknown_amounts("You have Rs 1,48,520 left.", calls, "") == [
         "148520"
     ]
+
+
+def test_policy_search_cites_both_docs_and_refuses_unknown_topics() -> None:
+    ctx = _ctx()
+    delay = registry.execute(ctx, "search_policy", {"query": "Is there compensation if my UPI refund is delayed?"})
+    assert (delay["results"][0]["doc"], delay["results"][0]["section"]) == ("failed-transactions", "Compensation for delay")
+    assert delay["results"][0]["version"] == "1.0"
+    card = registry.execute(ctx, "search_policy", {"query": "How do I report a card transaction I do not recognise?"})
+    assert card["results"][0]["doc"] == "card-disputes"
+    assert "not_found" in registry.execute(ctx, "search_policy", {"query": "What is the fee for a duplicate debit card?"})
