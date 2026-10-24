@@ -25,6 +25,8 @@ class Ctx:
     session: dict = field(
         default_factory=dict
     )  # per-conversation flags, e.g. scam_risk
+    # Every gated call and its result, so the engine sets answer_type from facts, not the model.
+    calls: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -109,6 +111,9 @@ def execute(ctx: Ctx, name: str, args: dict | None) -> dict:
             result = {"error": f"{name} failed: {type(exc).__name__}"}
             out["ok"] = False
         out["result"] = result
+    ctx.calls.append(
+        {"name": name, "args": args, "result": result, "ok": out.get("ok", True)}
+    )
     return result
 
 
