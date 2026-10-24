@@ -1,7 +1,7 @@
 """The only place that talks to Gemini. Every call becomes a trace span (model, tokens, ms)."""
 
 import logging
-from functools import cache
+import threading
 
 import httpx
 from google import genai
@@ -27,12 +27,22 @@ def llm_available() -> bool:
     return settings.use_llm and bool(settings.gemini_api_key)
 
 
-@cache
+_client_lock = threading.Lock()
+_shared_client: genai.Client | None = None
+
+
 def _client() -> genai.Client:
-    return genai.Client(
-        api_key=settings.gemini_api_key,
-        http_options=types.HttpOptions(timeout=settings.llm_timeout_ms),
-    )
+    # One client for every thread, made under a lock. Scam Guard and the Orchestrator start at
+    # the same moment; without the lock both made a client, and the spare one was garbage-collected
+    # mid-request, which closed its connection ("client has been closed").
+    global _shared_client
+    with _client_lock:
+        if _shared_client is None:
+            _shared_client = genai.Client(
+                api_key=settings.gemini_api_key,
+                http_options=types.HttpOptions(timeout=settings.llm_timeout_ms),
+            )
+        return _shared_client
 
 
 def _record_usage(out: dict, response: types.GenerateContentResponse) -> None:
