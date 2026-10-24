@@ -67,6 +67,9 @@ CREATE TABLE IF NOT EXISTS audit (
     name TEXT, payload TEXT, prev_hash TEXT, hash TEXT
 );
 CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, value INTEGER);
+CREATE TABLE IF NOT EXISTS login_lockouts (
+    customer_id TEXT PRIMARY KEY, failed_attempts INTEGER DEFAULT 0, locked_until TEXT
+);
 """
 
 
