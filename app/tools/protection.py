@@ -52,7 +52,7 @@ def block_card(ctx: Ctx, args: dict) -> dict:
 
 
 @executor("block_card")
-def execute_block_card(customer_id: str, args: dict) -> dict:
+def execute_block_card(customer_id: str, args: dict, trace_id: str) -> dict:
     card = db.one(
         "SELECT * FROM cards WHERE id = ? AND customer_id = ?",
         (args["card_id"], customer_id),
@@ -94,7 +94,7 @@ def fraud_verification(ctx: Ctx, args: dict) -> dict:
         txn = _riskiest_recent(ctx.customer_id)
     if not txn:
         return {"not_found": "No such transaction in your account"}
-    verdict = assess_and_store(ctx.customer_id, txn, ctx.trace.id)
+    verdict = assess_and_store(ctx.customer_id, txn, ctx.trace)
     advice = {
         "high": "offer to block the card and raise a dispute",
         "medium": "ask the customer to confirm; offer a dispute",
@@ -134,7 +134,7 @@ def raise_dispute(ctx: Ctx, args: dict) -> dict:
             "status": existing["status"],
             "already_raised": True,
         }
-    verdict = assess_and_store(ctx.customer_id, txn, ctx.trace.id)
+    verdict = assess_and_store(ctx.customer_id, txn, ctx.trace)
     escalated = verdict["band"] == "high"
     dispute_id = f"DSP-{db.next_counter('dispute'):06d}"
     db.execute(
