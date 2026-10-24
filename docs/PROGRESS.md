@@ -35,6 +35,7 @@ One line per working slice: `HH:MM · Name · what happened, in plain words. Nex
 - 09:50 · Ayush · Repo, Python environment and doc templates set up.
 - 10:55 · Team · Chose the Daily Banking Assistant over Library and Hospital (see D-01). Next: design, SRS and the slides.
 - 11:10 · Ayush · Design, SRS and decision log written; code skeleton created. Next: design presentation, then build from 12:00.
+- 14:00 · Ayush · Design v2 after the judges' review: LLM agent loop, four agents, scam prevention, debited-but-not-received, span traces (D-11 to D-22). Engine interface in docs/ENGINE.md. Reviewed the first app/ files: kept all, fixed the seed crash, plain-text PINs, the hash-chain race and a month-end date bug. Next: llm.py and the Orchestrator loop.
 
 ## Blockers
 

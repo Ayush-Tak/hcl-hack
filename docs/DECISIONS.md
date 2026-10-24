@@ -5,15 +5,27 @@ Why we built it this way. Each entry: what we chose, what else we considered and
 | ID | Decision | Status |
 | --- | --- | --- |
 | D-01 | Banking over Library and Hospital | active |
-| D-02 | A router workflow, not an autonomous or multi-agent system | active |
-| D-03 | The LLM understands and explains; code calculates and acts | active |
-| D-04 | Explainable rule-based fraud score | active |
+| D-02 | A router workflow, not an autonomous or multi-agent system | superseded by D-11 |
+| D-03 | The LLM understands and explains; code calculates and acts | superseded by D-15 |
+| D-04 | Explainable rule-based fraud score | superseded by D-16 |
 | D-05 | Merchant rules first, LLM only for unknown merchants | active |
 | D-06 | Hybrid policy search with a threshold and citations | active |
 | D-07 | Identity from the token, never from the message | active |
 | D-08 | Confirmation + OTP for actions, human queue for disputes | active |
 | D-09 | SQLite + Chroma, all local | active |
 | D-10 | Plain LLM SDK, no agent framework | active |
+| D-11 | LLM agent loop with native function calling | active |
+| D-12 | Rules router only as the fallback | active |
+| D-13 | Four agents with narrow jobs | active |
+| D-14 | Verifier on a second provider, with amounts checked in code | active |
+| D-15 | Guardrails live in code, around the agent | active |
+| D-16 | Fraud = rules + IsolationForest + an LLM analyst that can only raise | active |
+| D-17 | Scam Guard classifier on every message | active |
+| D-18 | Pre-payment check: hold, step-up or cooling-off | active |
+| D-19 | "Debited but not received" with RBI deadlines in code | active |
+| D-20 | Span-level trace with a hash-chained audit | active |
+| D-21 | Stateless API on Cloud Run, production stores named but not built | active |
+| D-22 | Engine as a Python interface, three owners | active |
 
 ## D-01: Banking over Library and Hospital
 
@@ -102,3 +114,149 @@ Why we built it this way. Each entry: what we chose, what else we considered and
   - Raw HTTP calls: no structured-output support.
 - **Trade-off accepted:** we write our own small router (about 150 lines), which we can explain line by line.
 - **Judge line:** "Every step is our code, so we can show the judges exactly what happens."
+
+## D-11: LLM agent loop with native function calling
+
+- **When / where:** design v2 after the judges' review, 14:00, Ayush
+- **Context:** judges found the v1 router too rigid: it can't handle "what's due, and can I still send Rs 20,000?" without a new route per combination. Supersedes D-02.
+- **Decision:** Gemini Flash native function calling in a loop we run ourselves: at most 6 turns, several tool calls per turn run in parallel, each through the gate.
+- **Alternatives considered:**
+  - Keep the router workflow: predictable, but every multi-part question needs new code, and the judges marked it down.
+  - The SDK's automatic function calling: less code, but tool calls would skip our gate and our trace.
+  - A ReAct loop that parses tool calls out of plain text: fragile parsing and more tokens than native function calling.
+- **Trade-off accepted:** the path can change between runs. The gate, the turn cap and the trace keep it safe and visible.
+- **Evidence:** assumption, verify by tool accuracy on `eval/questions.jsonl`.
+- **Judge line:** "The model chooses the steps, but every step goes through our gate and shows up in the trace."
+
+## D-12: Rules router only as the fallback
+
+- **When / where:** design v2, 14:00, Ayush
+- **Context:** an agent loop with no LLM is dead, and quota errors are common at hackathons.
+- **Decision:** a small keyword router (intent → fixed tools → template) runs when Gemini fails after one retry or `USE_LLM=0`.
+- **Alternatives considered:**
+  - No fallback: one rate-limit error during the demo and nothing works.
+  - Groq as the backup Orchestrator: a second model's tool-calling behaviour needs its own prompt tuning, and Groq is already our independent Verifier. We name it as the production failover (D-21).
+- **Trade-off accepted:** fallback replies are plainer and cover only the main intents.
+- **Evidence:** assumption, verify by running the eval with `USE_LLM=0`.
+- **Judge line:** "If the model goes down, the bank still answers, just more plainly."
+
+## D-13: Four agents with narrow jobs
+
+- **When / where:** design v2, 14:00, Ayush
+- **Context:** one prompt that chats, spots scams, judges fraud and checks itself does all four jobs badly, and is easy to talk out of the safety parts.
+- **Decision:** Orchestrator (tool calling), Scam Guard (classifier), Fraud Analyst (verdict + explanation), Verifier (checks the reply). Each has one prompt and one output schema.
+- **Alternatives considered:**
+  - One agent for everything: fewer calls, but the scam check sits inside the prompt it is supposed to guard.
+  - One agent per banking area (accounts, cards, loans): they would share the same tools, so it adds hand-offs without adding safety.
+- **Trade-off accepted:** more LLM calls per message. Scam Guard runs in parallel; the Analyst and Verifier run only when needed.
+- **Evidence:** assumption, verify by p50/p95 latency in `run_eval.py` against NFR-04.
+- **Judge line:** "Each agent has one job and one output we can check, and none of them can move money."
+
+## D-14: Verifier on a second provider, with amounts checked in code
+
+- **When / where:** design v2, 14:00, Ayush
+- **Context:** a wrong amount or an invented policy claim is the worst failure for a bank (HCL R6).
+- **Decision:** code first checks that every amount in the reply appears in a tool result. Then Llama 3.3 70B on Groq checks the claims against the tool results and the cited policy. On failure: one retry with the problems listed, then a safe templated reply.
+- **Alternatives considered:**
+  - Gemini checks its own answer: the same model tends to repeat the same mistake.
+  - Code check only: catches amounts, but not "this fee is waived" when the policy says it isn't.
+- **Trade-off accepted:** about 0.5 to 1 s more per checked reply, and a second API key.
+- **Evidence:** assumption, verify by the citation-accuracy and validator-pass numbers in the eval.
+- **Judge line:** "A different model from a different company checks every answer, and code checks every number."
+
+## D-15: Guardrails live in code, around the agent
+
+- **When / where:** design v2, 14:00, Ayush
+- **Context:** giving the model the steering wheel (D-11) makes it the main target for prompt injection. Supersedes D-03, keeping its core idea.
+- **Decision:** the customer ID comes only from the token; every tool call passes the policy gate; action tools only create pending actions that need an OTP; all maths goes through the `calculate` tool; `answer_type` is set by code.
+- **Alternatives considered:**
+  - Put the rules in the system prompt: a clever message can talk the model out of them.
+  - Let the model do arithmetic and trust it: LLMs slip on multi-step sums, and R6 forbids invented amounts.
+- **Trade-off accepted:** every new tool needs a schema, a tier and a gate test.
+- **Evidence:** smoke test, 24 Oct 13:57: the gate strips `customer_id` and refuses unknown arguments. Injection cases go in the eval.
+- **Judge line:** "Even if someone tricks the model, the most it can do is ask our code, and our code says no."
+
+## D-16: Fraud = rules + IsolationForest + an LLM analyst that can only raise
+
+- **When / where:** design v2, 14:00, Ayush (rules, analyst), teammate 3 (IsolationForest)
+- **Context:** judges said rules alone miss new patterns. Supersedes D-04.
+- **Decision:** weighted rules plus an IsolationForest anomaly signal worth +0.15, each with a plain reason. Medium and high go to the Fraud Analyst, which adds an explanation and can raise the band, never lower it.
+- **Alternatives considered:**
+  - A supervised model (gradient boosting): needs labelled fraud outcomes, which we don't have.
+  - Let the LLM decide the band: a fraudster can write the merchant description to talk it down, so it may only push the band upward.
+  - Rules only: easy to explain, but blind to patterns nobody wrote a rule for.
+- **Trade-off accepted:** an IsolationForest score has no reason of its own, so we show it as "unusual compared with your last 90 days" at a fixed weight.
+- **Evidence:** assumption, verify that the planted Dubai payment scores high and ordinary payments stay low.
+- **Judge line:** "Rules give the reasons, the model catches the unusual, and the AI can make us more careful but never less."
+
+## D-17: Scam Guard classifier on every message
+
+- **When / where:** design v2, 14:00, Ayush
+- **Context:** in authorised push payment scams the customer sends the money themselves, so fraud scoring after the payment is too late.
+- **Decision:** a Gemini Flash classifier reads every message for social-engineering patterns (bank or police impersonation, urgency, remote-access apps, requests to share an OTP) and returns a risk level. Code stores it as a session flag. Keyword rules stand in when the LLM is down.
+- **Alternatives considered:**
+  - Keyword list only: misses paraphrases like "the man from the bank says to read him the code".
+  - Check only messages that ask for a payment: the setup ("my account will be frozen") usually comes a few messages earlier.
+- **Trade-off accepted:** one extra small call per message, run in parallel so the customer doesn't wait for it.
+- **Evidence:** assumption, verify with scam cases in `eval/questions.jsonl`.
+- **Judge line:** "We listen for the scam story, not just the payment."
+
+## D-18: Pre-payment check: hold, step-up or cooling-off
+
+- **When / where:** design v2, 14:00, Ayush
+- **Context:** a UPI payment can't be recalled once it's sent, so prevention has to happen before it goes.
+- **Decision:** every transfer is checked first for a first-time payee, an amount over 3x the usual transfer, and the scam flag. The answer is hold, cooling-off, step-up or a normal OTP (rules in CLAUDE.md).
+- **Alternatives considered:**
+  - Detect after payment only: the money is already gone.
+  - Block every first-time payee: safe, but stops normal life, and customers would move to another app.
+- **Trade-off accepted:** some genuine large first-time payments wait 30 minutes.
+- **Evidence:** assumption; the thresholds are start values, verify with the demo cases.
+- **Judge line:** "We slow down only the payments that look like scams, and only by as much as the risk calls for."
+
+## D-19: "Debited but not received" with RBI deadlines in code
+
+- **When / where:** design v2, 14:00, Ayush
+- **Context:** this is one of the most common complaints at Indian banks, and RBI sets fixed deadlines and compensation for it.
+- **Decision:** `check_transaction_status` returns state + UTR. Code applies the RBI turnaround times (UPI and IMPS T+1, ATM T+5, Rs 100 a day after that), raises a complaint ticket inside the deadline and escalates past it.
+- **Alternatives considered:**
+  - Let the LLM read the deadline from policy text: dates and compensation must be exact, so they're code.
+  - Send every case to a human: most reverse on their own within T+1, and the queue would flood.
+- **Trade-off accepted:** the deadline table is hard-coded per channel and has to change if RBI changes it.
+- **Evidence:** the seed has two planted UPI cases, one inside T+1 and one past it, and an ATM case.
+- **Judge line:** "The customer gets the RBI deadline and their compensation worked out, not a 'please wait'."
+
+## D-20: Span-level trace with a hash-chained audit
+
+- **When / where:** design v2, 14:00, Ayush
+- **Context:** with an agent choosing the steps, one audit row per request (v1) can't show why something happened.
+- **Decision:** every guard check, LLM call (tokens, ms), gate decision, tool call and Verifier result is a span. Spans go to an audit table where each row's hash covers the previous row, and an endpoint shows any trace.
+- **Alternatives considered:**
+  - One audit row per request: too little to debug or defend an agent's path.
+  - A hosted tracing tool (LangSmith, an OpenTelemetry collector): setup time, and customer data would leave our system. OpenTelemetry is the production path.
+- **Trade-off accepted:** checking the chain reads every row, which is fine for a demo and needs checkpoints at scale.
+- **Evidence:** smoke test, 24 Oct 13:57: an edited audit row is caught by `verify_chain`.
+- **Judge line:** "For any answer we can show every step the AI took, and prove nobody edited the log afterwards."
+
+## D-21: Stateless API on Cloud Run, production stores named but not built
+
+- **When / where:** design v2, 14:00, Ayush
+- **Context:** judges asked how this scales. D-09 (SQLite + Chroma for the demo) stays.
+- **Decision:** a Dockerfile and no in-memory state, so the API runs on Cloud Run as is. The production design names Postgres + pgvector, Redis, Pub/Sub for the transaction stream and Gemini → Groq failover, but we don't build them today.
+- **Alternatives considered:**
+  - Kubernetes: more operations work than three people can justify for one service.
+  - SQLite in production: one writer at a time, so it can't scale out.
+- **Trade-off accepted:** the scale story is a design, not a running system, and we say so.
+- **Evidence:** assumption, verify that the container runs locally before the demo.
+- **Judge line:** "Nothing lives in the server's memory, so scaling is a setting, and each local store has a named managed replacement."
+
+## D-22: Engine as a Python interface, three owners
+
+- **When / where:** design v2, 14:00, whole team
+- **Context:** in v1 the backend owner had to build everything, which made them the bottleneck.
+- **Decision:** `app/engine.py` exposes six functions (docs/ENGINE.md). Teammate 2 builds routes, auth, the input guard and React on top of it. Teammate 3 builds the IsolationForest, the policies and the eval. Ayush builds the engine.
+- **Alternatives considered:**
+  - Ayush writes the routes too: the frontend waits on the busiest person.
+  - The engine as a separate HTTP service: an extra network hop and an extra deploy for no gain at this size.
+- **Trade-off accepted:** any change to the interface has to go through ENGINE.md and the team.
+- **Evidence:** assumption, verify by teammate 2 running the routes against an engine stub by 14:45.
+- **Judge line:** "One small interface between the AI engine and the web app, so three people could build in parallel."
