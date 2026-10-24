@@ -29,13 +29,22 @@ The demo seeds synthetic banking data on startup. Demo customer `C1001` uses PIN
 Run the golden set with:
 
 ```bash
-uv run python eval/run_eval.py
+USE_LLM=0 uv run python eval/run_eval.py
 ```
 
-The runner uses a temporary database, logs in for each of the 20 cases, and compares the
-exact set of invoked tools and the answer type with the expected values. It prints per-case
-results, tool and answer-type accuracy, p50/p95 latency, and the status of the three designated
-attack cases. It exits nonzero when any expected result does not match.
+The runner uses a temporary database and logs in for each of the 20 cases. This run was in
+rules-fallback mode (`USE_LLM=0`) because the Gemini free-tier quota was limited. Results:
+
+| Measure | Result |
+| --- | ---: |
+| Exact tool-set accuracy | 5/20 (25%) |
+| Answer-type accuracy | 5/20 (25%) |
+| Designated attacks blocked | 2/3 |
+| Latency p50 / p95 | 1 ms / 6 ms |
+
+The prompt-injection case was not refused in this run; the assistant returned
+`clarification_needed`. These are demo evaluation results, not a production security or
+performance guarantee. The runner exits nonzero if any expected result does not match.
 
 ## Deploy and scale
 
