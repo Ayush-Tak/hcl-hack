@@ -4,7 +4,7 @@ import re
 from datetime import date, datetime, timedelta
 from statistics import median
 
-from app import db
+from app import db, sessions
 from app.actions import create_pending, executor
 from app.formatting import format_inr
 from app.tools.registry import Ctx, schema, tool
@@ -135,7 +135,8 @@ def raise_complaint(ctx: Ctx, args: dict) -> dict:
     )
     if escalated:
         _open_case(
-            ctx,
+            ctx.customer_id,
+            ctx.trace.id,
             "not_received",
             f"{complaint_id}: {format_inr(txn['amount'])} past RBI TAT, "
             f"compensation {format_inr(deadline['compensation_due'])}",
@@ -148,18 +149,18 @@ def raise_complaint(ctx: Ctx, args: dict) -> dict:
     } | deadline
 
 
-def _open_case(ctx: Ctx, topic: str, summary: str) -> str:
+def _open_case(customer_id: str, trace_id: str, topic: str, summary: str) -> str:
     case_id = f"CASE-{db.next_counter('case'):06d}"
     db.execute(
         "INSERT INTO cases VALUES (?,?,?,?,?,?,?)",
         (
             case_id,
-            ctx.customer_id,
+            customer_id,
             topic,
             summary,
             "open",
             datetime.now().isoformat(timespec="seconds"),
-            ctx.trace.id,
+            trace_id,
         ),
     )
     return case_id
@@ -233,7 +234,8 @@ def transfer_money(ctx: Ctx, args: dict) -> dict:
     ctx.trace.add("gate", "pre_payment_check", **check)
     if check["decision"] == "hold":
         case_id = _open_case(
-            ctx,
+            ctx.customer_id,
+            ctx.trace.id,
             "scam_hold",
             f"Held {format_inr(amount)} to {upi_id}: " + "; ".join(check["signals"]),
         )
@@ -254,6 +256,7 @@ def transfer_money(ctx: Ctx, args: dict) -> dict:
             "upi_id": upi_id,
             "amount": amount,
             "cooling_off": check["decision"] == "cooling_off",
+            "session_id": ctx.session.get("id", ""),
         },
         summary,
         ctx.trace.id,
@@ -262,35 +265,48 @@ def transfer_money(ctx: Ctx, args: dict) -> dict:
     return {"pending_action": pending, "amount": amount, "payee": upi_id} | check
 
 
-@executor("transfer")
-def execute_transfer(customer_id: str, args: dict) -> dict:
-    account = db.one(
-        "SELECT id, balance FROM accounts WHERE customer_id = ?", (customer_id,)
+def _hold_at_confirm(customer_id: str, args: dict, trace_id: str) -> dict | None:
+    """Re-run the pre-payment check with the scam flag as it is now. Scam Guard may have
+    flagged the conversation after the transfer was proposed (it runs in parallel)."""
+    session = sessions.get(customer_id, args["session_id"])
+    check = pre_payment_check(
+        customer_id, args["upi_id"], args["amount"], session["scam_risk"] == "high"
     )
-    if account["balance"] < args["amount"]:
-        return {
-            "error": f"Not enough balance: {format_inr(account['balance'])} available"
-        }
-    if args["cooling_off"]:
-        release_at = (datetime.now() + COOLING_OFF).isoformat(timespec="seconds")
-        return {
-            "status": "scheduled",
-            "release_at": release_at,
-            "amount": args["amount"],
-            "payee": args["upi_id"],
-        }
+    if check["decision"] != "hold":
+        return None
+    case_id = _open_case(
+        customer_id,
+        trace_id,
+        "scam_hold",
+        f"Held at confirm {format_inr(args['amount'])} to {args['upi_id']}: "
+        + "; ".join(check["signals"]),
+    )
+    return {
+        "status": "held",
+        "case_id": case_id,
+        "amount": args["amount"],
+        "payee": args["upi_id"],
+        "signals": check["signals"],
+    }
+
+
+def _debit(customer_id: str, account_id: str, args: dict) -> str | None:
+    """Check and debit in one statement, so two confirms at once can't overdraw the account."""
     txn_id = f"T9{db.next_counter('live_txn'):04d}"
     with db.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        conn.execute(
-            "UPDATE accounts SET balance = balance - ? WHERE id = ?",
-            (args["amount"], account["id"]),
+        cur = conn.execute(
+            "UPDATE accounts SET balance = balance - ? WHERE id = ? AND balance >= ?",
+            (args["amount"], account_id, args["amount"]),
         )
+        if cur.rowcount == 0:
+            conn.execute("ROLLBACK")
+            return None
         conn.execute(
             "INSERT INTO transactions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 txn_id,
-                account["id"],
+                account_id,
                 customer_id,
                 datetime.now().isoformat(timespec="seconds"),
                 args["amount"],
@@ -307,10 +323,34 @@ def execute_transfer(customer_id: str, args: dict) -> dict:
             ),
         )
         conn.execute("COMMIT")
+    return txn_id
+
+
+@executor("transfer")
+def execute_transfer(customer_id: str, args: dict, trace_id: str) -> dict:
+    held = _hold_at_confirm(customer_id, args, trace_id)
+    if held:
+        return held
+    if args["cooling_off"]:
+        # No money moves yet; the debit (with the same balance check) happens at release.
+        release_at = (datetime.now() + COOLING_OFF).isoformat(timespec="seconds")
+        return {
+            "status": "scheduled",
+            "release_at": release_at,
+            "amount": args["amount"],
+            "payee": args["upi_id"],
+        }
+    account = db.one("SELECT id FROM accounts WHERE customer_id = ?", (customer_id,))
+    txn_id = _debit(customer_id, account["id"], args)
+    balance = db.one("SELECT balance FROM accounts WHERE id = ?", (account["id"],))[
+        "balance"
+    ]
+    if txn_id is None:
+        return {"error": f"Not enough balance: {format_inr(balance)} available"}
     return {
         "status": "sent",
         "txn_id": txn_id,
         "amount": args["amount"],
         "payee": args["upi_id"],
-        "balance_after": account["balance"] - args["amount"],
+        "balance_after": balance,
     }
