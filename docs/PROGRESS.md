@@ -20,7 +20,7 @@ Requirement IDs refer to `docs/SRS.md`.
 | Audit trail | FR-17 | Backend + Frontend | todo | |
 | Synthetic data + policy documents | Section 6 | Data | todo | |
 | 30-question test set + evaluation | Section 7 | Data | todo | |
-| Customer chat UI | Section 5 | Frontend | todo | |
+| Customer chat UI | Section 5 | Teammate 2 | done | Vite + React + TS in web/, proxy /api to :8000. Login, 5 quick chips, answer_type badges, amber warnings, OTP modal, trace viewer, alerts sidebar. |
 | Operations dashboard | FR-16, FR-17 | Frontend | todo | |
 | Savings observations | FR-10 | Backend | todo | Should |
 | Live policy updates | FR-18 | Backend | todo | Should |
@@ -42,6 +42,7 @@ One line per working slice: `HH:MM · Name · what happened, in plain words. Nex
 - 15:04 · Assistant · Added the demo ASGI entrypoint, Docker image and Cloud Run instructions; documented process-local sessions and SQLite as scale-out limitations. Next: move shared state to managed services before production.
 - 15:04 · Assistant · Decision: keep IsolationForest unsupervised rather than train a supervised classifier because this demo has no labelled fraud outcomes to train or validate against.
 - 15:05 · Ayush · Engine built: actions with OTP, fraud rules + engine, payment/card/policy tools, Gemini orchestrator loop, rules fallback, engine.py. Then the agents: Scam Guard (regex + Gemini, in parallel), Fraud Analyst (band only rises), Verifier (amount check, one repair turn, template; Groq claim check on policy answers). Fixed three review findings: OTP attempt race, overdraft, transfers not re-checking the scam flag at confirm. 8 pytest tests pass with a fake LLM. Gemini free tier (5 requests a minute) still forces fallback often. Next: policy docs from teammate 3, then a live run with a paid key.
+- 15:19 · Ayushi · Built customer chat UI in React (Vite + TS) with 5 quick-start chips, amber warning boxes, OTP confirmation modal, cryptographic trace viewer, and alerts sidebar. Next: connect to Ayush's real engine at 15:20.
 
 ## Blockers
 

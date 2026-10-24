@@ -127,7 +127,7 @@ For the ops view. Counts are since the database was seeded.
 
 ## What the engine needs from teammate 3
 
-- `app/fraud/ml.py`: `score(txn: dict, history: list[dict]) -> float`. The engine uses it only if the file exists. `history` is the customer's last 90 days of debits (the same keys as `txn`). Return how unusual `txn` is as a percentile from 0 to 1 against that history (0.95 means more unusual than 95% of it). The engine adds the +0.15 signal at 0.95 or above. No database access inside, so it's easy to test.
+- `app/fraud/ml.py`: `score(txn, history) -> float`, a risk from 0 to 1, and `explain(txn, history) -> list[str]`. `history` is the customer's last 90 days of debits. At a risk of 0.7 or above the engine adds a +0.15 signal and puts the `explain()` reasons, marked "Model:", into the alert. No database access inside, so it's easy to test.
 - `data/policies/*.md`: front matter with `doc`, `version`, `effective_date`; one `## ` heading per section, because we chunk on those headings.
 - `eval/questions.jsonl`, one JSON object per line: `{"id", "customer_id", "question", "expected_answer_type", "expected_tools": [...], "expected_amounts": [...], "notes"}`.
 
