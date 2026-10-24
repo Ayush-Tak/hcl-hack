@@ -7,7 +7,7 @@ Until the engine lands, stub these six functions with the example responses belo
 ## Rules for callers
 
 - `customer_id` always comes from `auth.current_user`, never from the request body or the message.
-- Run `guard.py` on the message before `handle_chat`, and pass the cleaned text.
+- `handle_chat` calls `app/guard.py`'s `check(message: str) -> None` if the file exists. Raise `ValueError(reason)` to refuse a message; the engine returns `refused`.
 - Role checks are the route's job. Officer-only routes check the role before calling the engine.
 - The engine functions block (they call LLMs and SQLite), so declare these routes with `def`, not `async def`. FastAPI then runs them in its thread pool.
 - The engine doesn't raise when an LLM fails: it falls back and still returns a `ChatResponse`. If it does raise, that's a bug; let it become a 500.
@@ -125,12 +125,16 @@ For the ops view. Counts are since the database was seeded.
 
 ## What the engine needs from teammate 3
 
-- `app/fraud/ml.py`: `anomaly_score(txn: dict, history: list[dict]) -> float`. `history` is the customer's last 90 days of debits (the same keys as `txn`). Return how unusual `txn` is as a percentile from 0 to 1 against that history (0.95 means more unusual than 95% of it). The engine adds the +0.15 signal at 0.95 or above. No database access inside, so it's easy to test.
+- `app/fraud/ml.py`: `score(txn: dict, history: list[dict]) -> float`. The engine uses it only if the file exists. `history` is the customer's last 90 days of debits (the same keys as `txn`). Return how unusual `txn` is as a percentile from 0 to 1 against that history (0.95 means more unusual than 95% of it). The engine adds the +0.15 signal at 0.95 or above. No database access inside, so it's easy to test.
 - `data/policies/*.md`: front matter with `doc`, `version`, `effective_date`; one `## ` heading per section, because we chunk on those headings.
 - `eval/questions.jsonl`, one JSON object per line: `{"id", "customer_id", "question", "expected_answer_type", "expected_tools": [...], "expected_amounts": [...], "notes"}`.
 
+### `get_summary(customer_id: str) -> dict`
+
+For `GET /me/summary`: `{"balance", "account_masked", "recent": [5 transactions]}`. No LLM.
+
 ## Open questions (not in the interface yet)
 
-1. `GET /me/summary` and `GET /me/spending` have no engine function. Proposal: `get_summary(customer_id)` and `get_spending(customer_id, period)`, thin wrappers over the tools, no LLM.
+1. `GET /me/spending` has no engine function yet. Proposal: `get_spending(customer_id, period)`, a thin wrapper over `analyze_expenses`.
 2. The review queue's resolve button needs `resolve_alert(alert_id, resolution, note) -> dict`.
 3. Cancelling a cooling-off transfer needs `cancel_action(customer_id, action_id) -> ChatResponse`.
