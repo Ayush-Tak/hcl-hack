@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 
+from app.fraud import ml
 from app.fraud.ml import anomaly_score, explain, score
 
 
@@ -52,7 +53,7 @@ def test_large_overnight_payment_in_new_city_scores_above_point_seven():
     assert any("overnight" in reason for reason in reasons)
 
 
-def test_fewer_than_twenty_debits_use_z_score_path():
+def test_fewer_than_twenty_debits_use_z_score_path(monkeypatch):
     txn = {
         "amount": 48_999,
         "direction": "debit",
@@ -61,4 +62,8 @@ def test_fewer_than_twenty_debits_use_z_score_path():
         "ts": "2026-10-24T02:14:00",
     }
 
+    def unexpected_forest(*args, **kwargs):
+        raise AssertionError("IsolationForest must not be used with fewer than 20 debits")
+
+    monkeypatch.setattr(ml, "IsolationForest", unexpected_forest)
     assert score(txn, _history()[:10]) > 0.7
