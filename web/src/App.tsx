@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import ReactMarkdown from 'react-markdown'
 import './App.css'
 import type { Customer, Message, ChatResponse, TraceDetails, AlertItem, PendingAction } from './types'
 
@@ -394,7 +395,26 @@ export default function App() {
                     )}
                   </div>
 
-                  <div className="message-text">{msg.text}</div>
+                  <div className="message-text">
+                    <ReactMarkdown
+                      components={{
+                        p: ({ children }) => <p style={{ margin: '0 0 6px 0' }}>{children}</p>,
+                        strong: ({ children }) => <strong style={{ color: '#e2e8f0', fontWeight: 700 }}>{children}</strong>,
+                        em: ({ children }) => <em style={{ color: '#cbd5e1' }}>{children}</em>,
+                        ul: ({ children }) => <ul style={{ paddingLeft: 18, margin: '4px 0' }}>{children}</ul>,
+                        ol: ({ children }) => <ol style={{ paddingLeft: 18, margin: '4px 0' }}>{children}</ol>,
+                        li: ({ children }) => <li style={{ marginBottom: 2, color: '#cbd5e1' }}>{children}</li>,
+                        h1: ({ children }) => <h1 style={{ fontSize: 17, fontWeight: 700, margin: '8px 0 4px', color: '#f1f5f9' }}>{children}</h1>,
+                        h2: ({ children }) => <h2 style={{ fontSize: 15, fontWeight: 700, margin: '8px 0 4px', color: '#f1f5f9' }}>{children}</h2>,
+                        h3: ({ children }) => <h3 style={{ fontSize: 13.5, fontWeight: 700, margin: '6px 0 3px', color: '#e2e8f0' }}>{children}</h3>,
+                        code: ({ children }) => <code style={{ background: '#0f172a', padding: '1px 5px', borderRadius: 4, fontSize: 12, fontFamily: 'monospace', color: '#7dd3fc' }}>{children}</code>,
+                        blockquote: ({ children }) => <blockquote style={{ borderLeft: '3px solid #6366f1', paddingLeft: 10, margin: '6px 0', color: '#94a3b8' }}>{children}</blockquote>,
+                        hr: () => <hr style={{ border: 'none', borderTop: '1px solid rgba(255,255,255,0.08)', margin: '8px 0' }} />,
+                      }}
+                    >
+                      {msg.text}
+                    </ReactMarkdown>
+                  </div>
 
                   {/* Warnings in Amber or Rose */}
                   {msg.response?.warnings && msg.response.warnings.length > 0 && (
