@@ -20,7 +20,7 @@ Requirement IDs refer to `docs/SRS.md`.
 | Audit trail | FR-17 | Backend + Frontend | todo | |
 | Synthetic data + policy documents | Section 6 | Data | todo | |
 | 30-question test set + evaluation | Section 7 | Data | todo | |
-| Customer chat UI | Section 5 | Frontend | todo | |
+| Customer chat UI | Section 5 | Teammate 2 | done | Vite + React + TS in web/, proxy /api to :8000. Login, 5 quick chips, answer_type badges, amber warnings, OTP modal, trace viewer, alerts sidebar. |
 | Operations dashboard | FR-16, FR-17 | Frontend | todo | |
 | Savings observations | FR-10 | Backend | todo | Should |
 | Live policy updates | FR-18 | Backend | todo | Should |
@@ -38,6 +38,7 @@ One line per working slice: `HH:MM · Name · what happened, in plain words. Nex
 - 14:00 · Ayush · Design v2 after the judges' review: LLM agent loop, four agents, scam prevention, debited-but-not-received, span traces (D-11 to D-22). Engine interface in docs/ENGINE.md. Reviewed the first app/ files: kept all, fixed the seed crash, plain-text PINs, the hash-chain race and a month-end date bug. Next: llm.py and the Orchestrator loop.
 - 14:31 · Ayush · Security review fix: the token secret no longer has a default anyone could read in the repo. Without TOKEN_SECRET the demo uses a random one per run, and with DEMO_MODE=0 the app refuses to start. Login lockout handed to teammate 2 (story board). Next: llm.py and the Orchestrator loop.
 - 14:52 · Ayushi · Built guardrails, login lockout (D-23), engine stub with audit traces, and FastAPI routes; verified with tests. Next: push Task 1 to web and start React UI.
+- 15:19 · Ayushi · Built customer chat UI in React (Vite + TS) with 5 quick-start chips, amber warning boxes, OTP confirmation modal, cryptographic trace viewer, and alerts sidebar. Next: connect to Ayush's real engine at 15:20.
 
 ## Blockers
 
