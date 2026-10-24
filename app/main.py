@@ -7,14 +7,19 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app import auth, engine, guard, seed
+from app import auth, db, engine, guard, seed
+from app.config import settings
 from app.trace import Trace
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Creates the tables, and the demo data only if the database is empty; it never overwrites.
-    seed.seed()
+    # Demo accounts have well-known PINs (1234, officer 9999), so they're only created in demo
+    # mode, and only into an empty database. Anywhere else we just create the tables.
+    if settings.demo_mode:
+        seed.seed()
+    else:
+        db.init_db()
     yield
 
 

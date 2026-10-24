@@ -43,6 +43,7 @@ One line per working slice: `HH:MM · Name · what happened, in plain words. Nex
 - 15:04 · Assistant · Decision: keep IsolationForest unsupervised rather than train a supervised classifier because this demo has no labelled fraud outcomes to train or validate against.
 - 15:05 · Ayush · Engine built: actions with OTP, fraud rules + engine, payment/card/policy tools, Gemini orchestrator loop, rules fallback, engine.py. Then the agents: Scam Guard (regex + Gemini, in parallel), Fraud Analyst (band only rises), Verifier (amount check, one repair turn, template; Groq claim check on policy answers). Fixed three review findings: OTP attempt race, overdraft, transfers not re-checking the scam flag at confirm. 8 pytest tests pass with a fake LLM. Gemini free tier (5 requests a minute) still forces fallback often. Next: policy docs from teammate 3, then a live run with a paid key.
 - 15:19 · Ayushi · Built customer chat UI in React (Vite + TS) with 5 quick-start chips, amber warning boxes, OTP confirmation modal, cryptographic trace viewer, and alerts sidebar. Next: connect to Ayush's real engine at 15:20.
+- 15:39 · Ayush · Merged the React UI and data work into main; fraud scoring now uses the ML model and its reasons; policy search cites both documents; fallback covers all 5 demo scenarios. Demo accounts are now only seeded when DEMO_MODE=1. Feature freeze: Groq orchestrator stashed, not merged. Gemini free tier is 20 requests a day, so the demo runs on the rules fallback plus one live question. Next: demo rehearsal.
 
 ## Blockers
 
