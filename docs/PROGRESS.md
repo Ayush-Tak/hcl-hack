@@ -37,6 +37,7 @@ One line per working slice: `HH:MM · Name · what happened, in plain words. Nex
 - 11:10 · Ayush · Design, SRS and decision log written; code skeleton created. Next: design presentation, then build from 12:00.
 - 14:00 · Ayush · Design v2 after the judges' review: LLM agent loop, four agents, scam prevention, debited-but-not-received, span traces (D-11 to D-22). Engine interface in docs/ENGINE.md. Reviewed the first app/ files: kept all, fixed the seed crash, plain-text PINs, the hash-chain race and a month-end date bug. Next: llm.py and the Orchestrator loop.
 - 14:31 · Ayush · Security review fix: the token secret no longer has a default anyone could read in the repo. Without TOKEN_SECRET the demo uses a random one per run, and with DEMO_MODE=0 the app refuses to start. Login lockout handed to teammate 2 (story board). Next: llm.py and the Orchestrator loop.
+- Ayush · Engine built: actions with OTP, fraud rules + engine, payment/card/policy tools, Gemini orchestrator loop, rules fallback, engine.py. Then the agents: Scam Guard (regex + Gemini, in parallel), Fraud Analyst (band only rises), Verifier (amount check, one repair turn, template; Groq claim check on policy answers). Fixed three review findings: OTP attempt race, overdraft, transfers not re-checking the scam flag at confirm. 8 pytest tests pass with a fake LLM. Gemini free tier (5 requests a minute) still forces fallback often. Next: policy docs from teammate 3, then a live run with a paid key.
 
 ## Blockers
 

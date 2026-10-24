@@ -40,7 +40,7 @@ flowchart LR
   STREAM[Transaction stream] --> ENG
   ENG --> FRAUD[Fraud: rules + IsolationForest]
   FRAUD --> FA[Fraud Analyst: Gemini Flash]
-  ORCH --> VER[Verifier: Llama on Groq]
+  ORCH --> VER[Verifier: gpt-oss-120b on Groq]
   ENG --> FB[Rules fallback router]
   ENG --> TRACE[(Trace spans + hash-chained audit)]
 ```
@@ -61,7 +61,7 @@ One request end to end: "The bank officer on the phone says send Rs 30,000 to fi
 | Orchestrator | Gemini Flash, native function calling | every message | tool calls, then the reply | which tools exist, the gate on each call, 6 turns at most |
 | Scam Guard | Gemini Flash, JSON schema | every message, in parallel with the Orchestrator | `{risk: none/low/high, patterns, reason}` | the session flag, and what the pre-payment check does with it |
 | Fraud Analyst | Gemini Flash, JSON schema | a transaction scores medium or high, or a customer disputes one | `{band, explanation}` | final band = the higher of the rules band and the analyst band |
-| Verifier | Llama 3.3 70B on Groq | before any reply with amounts or citations | `{ok, problems}` | amounts are checked in code first; on failure one retry, then a safe templated reply |
+| Verifier | gpt-oss-120b on Groq | before any reply with amounts or citations | `{ok, problems}` | amounts are checked in code first; on failure one retry, then a safe templated reply |
 
 How the Orchestrator loop works: we send the system prompt and the tool declarations from the registry. Each model turn may return several function calls; we run them in parallel, each through the gate, and send the results back. The loop stops when the model answers in text, or after 6 turns with a `clarification_needed` reply. We run the loop ourselves instead of the SDK's automatic function calling, so every call is gated and traced.
 
@@ -93,7 +93,7 @@ Every request gets a trace ID and a list of spans: input guard, each LLM call (a
 
 ## 9. Stack, data and API
 
-**Stack:** Python 3.12, FastAPI, SQLite, Chroma, `bge-small-en-v1.5`, rank-bm25, scikit-learn (IsolationForest), Gemini Flash through google-genai, Llama 3.3 70B on Groq, pytest. Frontend: React.
+**Stack:** Python 3.12, FastAPI, SQLite, Chroma, `bge-small-en-v1.5`, rank-bm25, scikit-learn (IsolationForest), Gemini Flash through google-genai, gpt-oss-120b on Groq, pytest. Frontend: React.
 
 **Data (synthetic, `app/seed.py`, dated relative to today):** 3 customers and an officer, about 90 days of transactions with planted cases (the Dubai card payment, two failed-but-debited UPI payments inside and past the deadline, a failed ATM withdrawal), cards, loans, bills, payees, products, and 5 policy documents with version and effective date.
 

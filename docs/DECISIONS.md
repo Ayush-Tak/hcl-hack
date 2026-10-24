@@ -26,6 +26,7 @@ Why we built it this way. Each entry: what we chose, what else we considered and
 | D-20 | Span-level trace with a hash-chained audit | active |
 | D-21 | Stateless API on Cloud Run, production stores named but not built | active |
 | D-22 | Engine as a Python interface, three owners | active |
+| D-23 | Verifier model is gpt-oss-120b on Groq | active |
 
 ## D-01: Banking over Library and Hospital
 
@@ -260,3 +261,15 @@ Why we built it this way. Each entry: what we chose, what else we considered and
 - **Trade-off accepted:** any change to the interface has to go through ENGINE.md and the team.
 - **Evidence:** assumption, verify by teammate 2 running the routes against an engine stub by 14:45.
 - **Judge line:** "One small interface between the AI engine and the web app, so three people could build in parallel."
+
+## D-23: Verifier model is gpt-oss-120b on Groq, not Llama 3.3 70B
+
+- **When / where:** story 9, Verifier build, Ayush
+- **Context:** Groq returned 404 for `llama-3.3-70b-versatile`; the key's model list has no general Llama chat model left. Changes the model named in D-14, not its idea.
+- **Decision:** `openai/gpt-oss-120b` on Groq for the claim check, set by `GROQ_MODEL`.
+- **Alternatives considered:**
+  - Gemini checks its own claims: the same model tends to repeat the same mistake, which D-14 exists to avoid.
+  - `qwen/qwen3.8-27b` on Groq: also independent, but smaller; we took the largest general model on the list.
+- **Trade-off accepted:** the judge line in D-14 names Llama, so we say "a second model from a second provider" instead.
+- **Evidence:** live check, 24 Oct: it passed a correct policy answer and flagged all three claims in an invented one.
+- **Judge line:** "The answer is written by Google's model and checked by a different company's model, so one model's blind spot doesn't pass through."
