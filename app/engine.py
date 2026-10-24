@@ -1,7 +1,5 @@
 """The interface teammate 2's routes call (docs/ENGINE.md). Routes hold no banking logic."""
 
-import importlib
-import importlib.util
 import json
 import logging
 import re
@@ -21,12 +19,6 @@ from app.trace import Trace
 
 logger = logging.getLogger(__name__)
 
-_guard = (
-    importlib.import_module("app.guard")
-    if importlib.util.find_spec("app.guard")
-    else None
-)
-
 ORCHESTRATOR_ERRORS = (genai_errors.APIError, httpx.HTTPError, LLMError)
 _CUSTOMER_ID = re.compile(r"\b[CO]\d{4}\b", re.IGNORECASE)
 CLARIFY = "Could you tell me a bit more about what you need? For example the payee, amount or card."
@@ -40,12 +32,6 @@ def _refusal(customer_id: str, message: str, trace_: Trace) -> str | None:
     if others:
         trace_.add("guard", "privacy", decision="refuse", mentioned=sorted(others))
         return "I can only help with your own accounts, so I can't share anything about another customer."
-    if _guard is not None:
-        try:
-            _guard.check(message)
-        except ValueError as exc:
-            trace_.add("guard", "input_guard", decision="refuse", reason=str(exc))
-            return "I can't help with that request."
     return None
 
 

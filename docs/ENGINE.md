@@ -7,7 +7,8 @@ Until the engine lands, stub these six functions with the example responses belo
 ## Rules for callers
 
 - `customer_id` always comes from `auth.current_user`, never from the request body or the message.
-- `handle_chat` calls `app/guard.py`'s `check(message: str) -> None` if the file exists. Raise `ValueError(reason)` to refuse a message; the engine returns `refused`.
+- The route runs `guard.check()` first and passes `clean_message` to `handle_chat`; a blocked message never reaches the engine.
+- `handle_chat` and `confirm_action` return a Pydantic `ChatResponse`; routes return `.model_dump()`.
 - Role checks are the route's job. Officer-only routes check the role before calling the engine.
 - The engine functions block (they call LLMs and SQLite), so declare these routes with `def`, not `async def`. FastAPI then runs them in its thread pool.
 - The engine doesn't raise when an LLM fails: it falls back and still returns a `ChatResponse`. If it does raise, that's a bug; let it become a 500.

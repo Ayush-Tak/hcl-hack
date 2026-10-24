@@ -5,16 +5,16 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from app import auth, db, guard
-from app import engine_stub as engine
+from app import auth, engine, guard, seed
 from app.trace import Trace
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db.init_db()
+    # Creates the tables, and the demo data only if the database is empty; it never overwrites.
+    seed.seed()
     yield
 
 
@@ -70,7 +70,9 @@ def login_route(req: LoginRequest) -> dict[str, Any]:
 
 
 @app.post("/chat")
-def chat_route(req: ChatRequest, user: dict = Depends(auth.current_user)) -> dict[str, Any]:
+def chat_route(
+    req: ChatRequest, user: dict = Depends(auth.current_user)
+) -> dict[str, Any]:
     # 1. Guard check
     guard_res = guard.check(req.message)
     if guard_res["blocked"]:
@@ -97,7 +99,7 @@ def chat_route(req: ChatRequest, user: dict = Depends(auth.current_user)) -> dic
         customer_id=user["customer_id"],
         message=guard_res["clean_message"],
         session_id=req.session_id,
-    )
+    ).model_dump()
 
 
 @app.post("/actions/{action_id}/confirm")
@@ -110,17 +112,21 @@ def confirm_action_route(
         customer_id=user["customer_id"],
         action_id=action_id,
         otp=req.otp,
-    )
+    ).model_dump()
 
 
 @app.get("/trace/{trace_id}")
 @app.get("/ops/traces/{trace_id}")
-def trace_route(trace_id: str, user: dict = Depends(auth.current_user)) -> dict[str, Any]:
+def trace_route(
+    trace_id: str, user: dict = Depends(auth.current_user)
+) -> dict[str, Any]:
     trace = engine.get_trace(trace_id)
     if not trace:
         raise HTTPException(status_code=404, detail="Trace not found")
     # Verify authorization: officer, or trace belongs to customer
-    if user.get("role") != "officer" and trace.get("customer_id") != user.get("customer_id"):
+    if user.get("role") != "officer" and trace.get("customer_id") != user.get(
+        "customer_id"
+    ):
         raise HTTPException(status_code=403, detail="Forbidden")
     return trace
 
