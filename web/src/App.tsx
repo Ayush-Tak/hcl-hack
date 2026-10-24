@@ -397,7 +397,11 @@ export default function App() {
 
                   <div className="message-text">
                     <ReactMarkdown
+                      // Model output is untrusted: an image (or a link) to another site could carry
+                      // customer data out in its URL, so images are dropped and links show as text.
+                      disallowedElements={['img']}
                       components={{
+                        a: ({ children }) => <span>{children}</span>,
                         p: ({ children }) => <p style={{ margin: '0 0 6px 0' }}>{children}</p>,
                         strong: ({ children }) => <strong style={{ color: '#e2e8f0', fontWeight: 700 }}>{children}</strong>,
                         em: ({ children }) => <em style={{ color: '#cbd5e1' }}>{children}</em>,
