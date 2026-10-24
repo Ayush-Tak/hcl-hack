@@ -207,7 +207,7 @@ Why we built it this way. Each entry: what we chose, what else we considered and
 
 - **When / where:** design v2, 14:00, Ayush
 - **Context:** a UPI payment can't be recalled once it's sent, so prevention has to happen before it goes.
-- **Decision:** every transfer is checked first for a first-time payee, an amount over 3x the usual transfer, and the scam flag. The answer is hold, cooling-off, step-up or a normal OTP (rules in CLAUDE.md).
+- **Decision:** every transfer is checked first for a first-time payee, an amount over 3x the usual transfer, and the scam flag. The answer is hold, cooling-off, step-up or a normal OTP (rules in `pre_payment_check`, app/tools/payments.py).
 - **Alternatives considered:**
   - Detect after payment only: the money is already gone.
   - Block every first-time payee: safe, but stops normal life, and customers would move to another app.

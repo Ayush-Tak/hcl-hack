@@ -79,9 +79,9 @@ How the Orchestrator loop works: we send the system prompt and the tool declarat
 
 ## 6. Fraud and scam prevention
 
-**Detection (after a transaction):** `ingest_transaction` scores every new transaction. Score = weighted rules (amount vs the 90-day median, first-time merchant, 00:00 to 05:00, a city away from home, rapid repeats) + an IsolationForest anomaly signal, each with a plain-language reason. Weights and bands are in CLAUDE.md. Medium or high goes to the Fraud Analyst, which can raise the band and adds an explanation, but can never lower it. Medium and high create an alert; high also offers a card block.
+**Detection (after a transaction):** `ingest_transaction` scores every new transaction. Score = weighted rules (amount vs the 90-day median, first-time merchant, 00:00 to 05:00, a city away from home, rapid repeats) + an IsolationForest anomaly signal, each with a plain-language reason. Weights and bands are in `app/fraud/rules.py` and `app/fraud/engine.py`. Medium or high goes to the Fraud Analyst, which can raise the band and adds an explanation, but can never lower it. Medium and high create an alert; high also offers a card block.
 
-**Prevention (before a payment):** every transfer passes a pre-payment check first. Signals: first-time payee, amount over 3x the usual transfer, scam flag in the session. Outcomes: **hold** (no payment, case to a human), **cooling-off** (runs after 30 minutes unless cancelled), **step-up** (a warning the customer must acknowledge, then OTP), or normal OTP. Exact rules are in CLAUDE.md.
+**Prevention (before a payment):** every transfer passes a pre-payment check first. Signals: first-time payee, amount over 3x the usual transfer, scam flag in the session. Outcomes: **hold** (no payment, case to a human), **cooling-off** (runs after 30 minutes unless cancelled), **step-up** (a warning the customer must acknowledge, then OTP), or normal OTP. Exact rules are in `pre_payment_check` (`app/tools/payments.py`).
 
 ## 7. Debited but not received
 

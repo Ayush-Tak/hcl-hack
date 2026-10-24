@@ -63,7 +63,7 @@ Answer: No. The model writes the words; code looks at which tools ran and what t
 
 What it does: lets Gemini choose which tools to call, and in which order, to answer the customer.
 How it works:
-- We send the system prompt (rules from CLAUDE.md), the tool declarations from the registry, the last 4 turns as plain text, and the message. Temperature 0.
+- We send the system prompt (our bank rules), the tool declarations from the registry, the last 4 turns as plain text, and the message. Temperature 0.
 - Gemini answers with text or with function calls. We run the calls ourselves (up to 4 in parallel threads), each through the gate, and send the results back.
 - At most 6 model turns, then we stop and ask a clarifying question.
 - We keep Gemini's own returned message in the history, because Gemini needs its function-call parts back on the next turn.
