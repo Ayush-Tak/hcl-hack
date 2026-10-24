@@ -5,14 +5,15 @@ import importlib.util
 import json
 import logging
 import re
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 
 import httpx
 from google.genai import errors as genai_errors
 
-from app import actions, db, trace
-from app.agents import fallback, orchestrator
-from app.agents.llm import LLMError, llm_available
+from app import actions, db, sessions, trace
+from app.agents import fallback, orchestrator, scam_guard, verifier
+from app.agents.llm import GeminiSession, LLMError, llm_available
 from app.fraud.engine import assess_and_store
 from app.models import ChatResponse, Citation, PendingAction, ToolInvoked, Warning
 from app.tools import banking, calc, payments, policy, protection, registry  # noqa: F401  (registers tools)
@@ -26,47 +27,12 @@ _guard = (
     else None
 )
 
-# Per-session memory and flags. In memory for the demo; Redis in production (design.md section 10).
-_SESSIONS: dict[tuple[str, str], dict] = {}
-
-# Keyword stand-in for the Scam Guard agent (D-17): each group is one social-engineering pattern.
-SCAM_PATTERNS = {
-    "bank or police impersonation": r"bank (officer|manager|staff)|from the bank|police|cbi|customs|rbi officer",
-    "urgency or threats": r"frozen|freeze|blocked today|immediately|urgent|arrest|last chance",
-    "asks for an OTP or code": r"(share|tell|read|give).{0,20}(otp|code|pin)",
-    "remote access app": r"anydesk|teamviewer|quick ?support|screen ?shar",
-    "KYC update story": r"\bkyc\b",
-}
+ORCHESTRATOR_ERRORS = (genai_errors.APIError, httpx.HTTPError, LLMError)
 _CUSTOMER_ID = re.compile(r"\b[CO]\d{4}\b", re.IGNORECASE)
-_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
-SMALL_NUMBER = 10  # days, counts and "T+1" are fine; we check amounts and IDs
-
-
-def _session(customer_id: str, session_id: str) -> dict:
-    return _SESSIONS.setdefault(
-        (customer_id, session_id),
-        {"memory": [], "scam_risk": "none", "scam_patterns": []},
-    )
-
-
-def _scam_check(ctx: registry.Ctx, message: str) -> None:
-    found = [
-        name
-        for name, pattern in SCAM_PATTERNS.items()
-        if re.search(pattern, message, re.IGNORECASE)
-    ]
-    risky = len(found) >= 2 or {"asks for an OTP or code", "remote access app"} & set(
-        found
-    )
-    if found:
-        # The flag only goes up within a session: a calm follow-up message doesn't clear it.
-        ctx.session["scam_risk"] = (
-            "high" if risky or ctx.session["scam_risk"] == "high" else "low"
-        )
-        ctx.session["scam_patterns"] = sorted(
-            set(ctx.session["scam_patterns"]) | set(found)
-        )
-    ctx.trace.add("guard", "scam_check", risk=ctx.session["scam_risk"], patterns=found)
+CLARIFY = "Could you tell me a bit more about what you need? For example the payee, amount or card."
+# Scam Guard's model call runs here while the Orchestrator works on the same message.
+_SIDE_POOL = ThreadPoolExecutor(max_workers=4)
+SCAM_GUARD_WAIT_S = 5
 
 
 def _refusal(customer_id: str, message: str, trace_: Trace) -> str | None:
@@ -83,15 +49,62 @@ def _refusal(customer_id: str, message: str, trace_: Trace) -> str | None:
     return None
 
 
-def _run_agent(ctx: registry.Ctx, message: str) -> tuple[str | None, str]:
-    """Returns (answer, mode). Falls back to rules when the LLM is off or fails."""
+def _start_scam_guard(ctx: registry.Ctx, message: str) -> Future:
+    # The regex result lands before any tool runs; the model's verdict may come later, which
+    # is why a transfer re-checks the flag when it's confirmed.
+    scam_guard.apply(ctx.session, scam_guard.fast_check(message), ctx.trace, "regex")
+    return _SIDE_POOL.submit(scam_guard.classify, message, ctx.trace)
+
+
+def _finish_scam_guard(ctx: registry.Ctx, pending: Future) -> None:
+    try:
+        verdict = pending.result(timeout=SCAM_GUARD_WAIT_S)
+    except TimeoutError:
+        ctx.trace.add("agent", "scam_guard", skipped="timeout")
+        return
+    except Exception:
+        # Scam Guard must fail safe: a bug in it may not take the chat down. It's logged with
+        # the stack trace and recorded in the trace, and the regex result still stands.
+        logger.exception("scam guard failed (trace %s)", ctx.trace.id)
+        ctx.trace.add("agent", "scam_guard", ok=False, skipped="error")
+        return
+    scam_guard.apply(ctx.session, verdict, ctx.trace, "llm")
+
+
+def _run_agent(
+    ctx: registry.Ctx, message: str
+) -> tuple[str | None, str, GeminiSession | None]:
+    """Returns (answer, mode, session). Falls back to rules when the LLM is off or fails."""
     if llm_available():
         try:
-            return orchestrator.run(ctx, message, ctx.session["memory"]), "agent"
-        except (genai_errors.APIError, httpx.HTTPError, LLMError) as exc:
-            logger.warning("LLM failed, using rules fallback: %s", exc)
+            answer, session = orchestrator.run(ctx, message, ctx.session["memory"])
+            return answer, "agent", session
+        except ORCHESTRATOR_ERRORS as exc:
+            logger.warning("LLM failed, using rules fallback: %s", str(exc)[:300])
             ctx.trace.add("llm", "orchestrator_failed", ok=False, error=str(exc)[:300])
-    return fallback.run(ctx, message), "fallback"
+    return fallback.run(ctx, message), "fallback", None
+
+
+def _verify(
+    ctx: registry.Ctx, answer: str, message: str, session: GeminiSession | None
+) -> tuple[str, list[str], list[str] | None]:
+    """Amount check, one repair turn, then the template. Returns (answer, unchecked numbers, claim problems)."""
+    unknown = verifier.unknown_amounts(answer, ctx.calls, message)
+    if unknown and session is not None:
+        try:
+            repaired = orchestrator.repair(session, unknown)
+        except ORCHESTRATOR_ERRORS as exc:
+            logger.warning("repair turn failed: %s", str(exc)[:200])
+            repaired = None
+        if repaired:
+            answer, unknown = (
+                repaired,
+                verifier.unknown_amounts(repaired, ctx.calls, message),
+            )
+    ctx.trace.add("verifier", "amount_check", ok=not unknown, unknown=unknown)
+    if unknown:
+        answer = verifier.template_answer(ctx.calls)
+    return answer, unknown, verifier.check_claims(answer, ctx.calls, ctx.trace)
 
 
 def _answer_type(calls: list[dict]) -> str:
@@ -111,25 +124,9 @@ def _answer_type(calls: list[dict]) -> str:
     return "retrieved_fact"
 
 
-def _numbers_in(value: object) -> set[str]:
-    if isinstance(value, dict):
-        return set().union(*(_numbers_in(v) for v in value.values()))
-    if isinstance(value, list):
-        return set().union(*(_numbers_in(v) for v in value))
-    if isinstance(value, bool) or value is None:
-        return set()
-    return {n.replace(",", "").rstrip(".") for n in _NUMBER.findall(str(value))}
-
-
-def _unknown_amounts(answer: str, calls: list[dict], message: str) -> list[str]:
-    """The code half of the Verifier (D-14): every number in the reply must come from a tool or the customer."""
-    known = _numbers_in([c["result"] for c in calls]) | _numbers_in(message)
-    known |= {k.split(".")[0] for k in known}
-    found = {n.replace(",", "").rstrip(".") for n in _NUMBER.findall(answer)}
-    return sorted(n for n in found if float(n) >= SMALL_NUMBER and n not in known)
-
-
-def _warnings(ctx: registry.Ctx, mode: str, unknown: list[str]) -> list[Warning]:
+def _warnings(
+    ctx: registry.Ctx, mode: str, unknown: list[str], claims: list[str] | None
+) -> list[Warning]:
     warnings = []
     if ctx.session["scam_risk"] == "high":
         warnings.append(
@@ -163,9 +160,16 @@ def _warnings(ctx: registry.Ctx, mode: str, unknown: list[str]) -> list[Warning]
         warnings.append(
             Warning(
                 source="verifier",
+                level="info",
+                message="Some numbers couldn't be checked, so this answer shows the exact figures instead.",
+            )
+        )
+    if claims:
+        warnings.append(
+            Warning(
+                source="verifier",
                 level="high",
-                message="Some numbers in this answer could not be checked: "
-                + ", ".join(unknown),
+                message="Not confirmed by policy: " + "; ".join(claims),
             )
         )
     return warnings
@@ -217,26 +221,24 @@ def handle_chat(customer_id: str, message: str, session_id: str) -> ChatResponse
     refusal = _refusal(customer_id, message, trace_)
     if refusal:
         return _respond(trace_, refusal, "refused", "guard")
-    ctx = registry.Ctx(customer_id, trace_, _session(customer_id, session_id))
-    _scam_check(ctx, message)
-    answer, mode = _run_agent(ctx, message)
-    if answer is None:
-        answer = "Could you tell me a bit more about what you need? For example the payee, amount or card."
-    answer_type = _answer_type(ctx.calls)
-    unknown = _unknown_amounts(answer, ctx.calls, message)
-    trace_.add("verifier", "amount_check", ok=not unknown, unknown=unknown)
-    ctx.session["memory"] = (
-        ctx.session["memory"] + [{"user": message, "assistant": answer}]
-    )[-orchestrator.MEMORY_TURNS :]
+    ctx = registry.Ctx(customer_id, trace_, sessions.get(customer_id, session_id))
+    scam_check = _start_scam_guard(ctx, message)
+    answer, mode, session = _run_agent(ctx, message)
+    _finish_scam_guard(ctx, scam_check)
+    answer, unknown, claims = _verify(
+        ctx, answer if answer is not None else CLARIFY, message, session
+    )
+    memory = ctx.session["memory"] + [{"user": message, "assistant": answer}]
+    ctx.session["memory"] = memory[-orchestrator.MEMORY_TURNS :]
     return _respond(
         trace_,
         answer,
-        answer_type,
+        _answer_type(ctx.calls),
         mode,
         data={c["name"]: c["result"] for c in ctx.calls if c["ok"]} or None,
         citations=_citations(ctx.calls),
         pending_action=_pending(ctx.calls),
-        warnings=_warnings(ctx, mode, unknown),
+        warnings=_warnings(ctx, mode, unknown, claims),
         tools_invoked=[
             ToolInvoked(name=s["name"], ok=s.get("ok", True), ms=s.get("ms", 0))
             for s in trace_.spans
@@ -253,6 +255,12 @@ def _completed_text(result: dict) -> str:
         )
     if result.get("status") == "scheduled":
         return f"Your payment is scheduled and will be released at {result['release_at']}. You can still cancel it."
+    if result.get("held") or result.get("status") == "held":
+        return (
+            f"We've held this payment for your safety ({'; '.join(result['signals'])}). "
+            f"Case {result['case_id']} is with our team, and they'll call you. "
+            "The bank never asks you to move money or share an OTP."
+        )
     if result.get("status") == "sent":
         return f"Sent. Reference {result['txn_id']}."
     return "Done."
@@ -261,14 +269,17 @@ def _completed_text(result: dict) -> str:
 def confirm_action(customer_id: str, action_id: str, otp: str) -> ChatResponse:
     trace_ = Trace(customer_id, f"confirm {action_id}")
     with trace_.span("action", "confirm", action_id=action_id) as out:
-        outcome = actions.confirm(customer_id, action_id, otp)
+        outcome = actions.confirm(customer_id, action_id, otp, trace_.id)
         out["ok"] = outcome["ok"]
     if not outcome["ok"]:
         return _respond(trace_, outcome["reason"], "refused", "action")
+    answer_type = (
+        "escalated" if outcome["result"].get("status") == "held" else "action_completed"
+    )
     return _respond(
         trace_,
         _completed_text(outcome["result"]),
-        "action_completed",
+        answer_type,
         "action",
         data=outcome["result"],
     )
@@ -299,7 +310,7 @@ def ingest_transaction(customer_id: str, txn: dict) -> dict:
         tuple(row.values()),
     )
     with trace_.span("tool", "fraud_score", txn_id=row["id"]) as out:
-        verdict = assess_and_store(customer_id, row, trace_.id)
+        verdict = assess_and_store(customer_id, row, trace_)
         out["result"] = verdict
     trace_.finish(f"{verdict['band']} risk", "retrieved_fact", "ingest")
     return {"txn_id": row["id"]} | verdict
@@ -321,7 +332,9 @@ def list_alerts(customer_id: str | None) -> list[dict]:
 def _percentile(sorted_values: list[int], percent: int) -> int:
     if not sorted_values:
         return 0
-    return sorted_values[min(len(sorted_values) - 1, len(sorted_values) * percent // 100)]
+    return sorted_values[
+        min(len(sorted_values) - 1, len(sorted_values) * percent // 100)
+    ]
 
 
 def metrics() -> dict:
@@ -333,10 +346,16 @@ def metrics() -> dict:
     }
     return {
         "requests": len(rows),
-        "latency_ms": {"p50": _percentile(latencies, 50), "p95": _percentile(latencies, 95)},
+        "latency_ms": {
+            "p50": _percentile(latencies, 50),
+            "p95": _percentile(latencies, 95),
+        },
         "llm_calls": sum(r["llm_calls"] for r in rows),
         "tokens_in": sum(r["tokens_in"] for r in rows),
         "tokens_out": sum(r["tokens_out"] for r in rows),
+        "llm_calls_per_request": round(sum(r["llm_calls"] for r in rows) / len(rows), 2)
+        if rows
+        else 0,
         "fallback_rate": round(
             sum(r["mode"] == "fallback" for r in rows) / len(rows), 2
         )

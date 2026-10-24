@@ -41,11 +41,16 @@ MIN_MATCHES = 2
 
 
 def _front_matter(text: str) -> tuple[dict, str]:
-    if not text.startswith("---"):
-        return {}, text
-    _, head, body = text.split("---", 2)
-    meta = dict(line.split(":", 1) for line in head.strip().splitlines() if ":" in line)
-    return {k.strip(): v.strip().strip("\"'") for k, v in meta.items()}, body
+    """Metadata is the `key: value` lines before the first section, with or without --- fences."""
+    start = 0 if text.startswith("## ") else text.find("\n## ")
+    if start == -1:
+        return {}, ""
+    meta = {}
+    for line in text[:start].splitlines():
+        key, colon, value = line.partition(":")
+        if colon and key.strip() and " " not in key.strip():
+            meta[key.strip().lower()] = value.strip().strip("\"'")
+    return meta, text[start:].lstrip("\n")
 
 
 def load_sections(folder: Path) -> list[dict]:

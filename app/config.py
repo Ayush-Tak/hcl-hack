@@ -32,7 +32,7 @@ class Settings:
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     groq_api_key: str = os.getenv("GROQ_API_KEY", "")
     llm_model: str = os.getenv("LLM_MODEL") or "gemini-3.5-flash"
-    groq_model: str = os.getenv("GROQ_MODEL") or "llama-3.3-70b-versatile"
+    groq_model: str = os.getenv("GROQ_MODEL") or "openai/gpt-oss-120b"
     db_path: Path = field(
         default_factory=lambda: Path(os.getenv("DB_PATH") or ROOT / "data" / "bank.db")
     )

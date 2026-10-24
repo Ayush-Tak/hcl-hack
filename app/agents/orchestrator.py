@@ -6,7 +6,7 @@ from google.genai import types
 
 from app.agents.llm import GeminiSession
 from app.config import settings
-from app.prompts import ORCHESTRATOR_SYSTEM
+from app.prompts import ORCHESTRATOR_SYSTEM, VERIFIER_REPAIR
 from app.tools import registry
 from app.tools.registry import Ctx
 
@@ -31,16 +31,19 @@ def _memory_contents(memory: list[dict]) -> list[types.Content]:
 def _run_calls(ctx: Ctx, calls: list[types.FunctionCall]) -> list[types.Part]:
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(
-            pool.map(lambda c: registry.execute(ctx, c.name, dict(c.args or {})), calls)
+            pool.map(
+                lambda c: registry.execute(ctx, c.name or "", dict(c.args or {})), calls
+            )
         )
     return [
-        types.Part.from_function_response(name=c.name, response=r)
+        types.Part.from_function_response(name=c.name or "", response=r)
         for c, r in zip(calls, results)
     ]
 
 
-def run(ctx: Ctx, message: str, memory: list[dict]) -> str | None:
-    """The reply text, or None if the model still wanted tools after the last turn."""
+def run(ctx: Ctx, message: str, memory: list[dict]) -> tuple[str | None, GeminiSession]:
+    """The reply text (None if the model still wanted tools after the last turn), and the
+    session, so the Verifier can ask for one repair turn."""
     session = GeminiSession(
         ORCHESTRATOR_SYSTEM,
         registry.declarations(),
@@ -52,6 +55,18 @@ def run(ctx: Ctx, message: str, memory: list[dict]) -> str | None:
         response = session.send(parts)
         calls = response.function_calls or []
         if not calls:
-            return response.text or ""
+            return response.text or "", session
         parts = _run_calls(ctx, calls)
-    return None
+    return None, session
+
+
+def repair(session: GeminiSession, unknown_numbers: list[str]) -> str | None:
+    """One repair turn. If the model answers with tool calls instead of text, we don't run them."""
+    response = session.send(
+        [
+            types.Part.from_text(
+                text=VERIFIER_REPAIR.format(numbers=", ".join(unknown_numbers))
+            )
+        ]
+    )
+    return None if response.function_calls else (response.text or None)

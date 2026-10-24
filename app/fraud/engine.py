@@ -6,7 +6,9 @@ import logging
 from datetime import datetime, timedelta
 
 from app import db
+from app.agents import fraud_analyst
 from app.fraud.rules import rule_signals
+from app.trace import Trace
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +54,14 @@ def assess(customer_id: str, txn: dict) -> dict:
     }
 
 
-def assess_and_store(customer_id: str, txn: dict, trace_id: str | None) -> dict:
-    """Score a stored transaction, save the score, and open an alert for medium or high."""
-    verdict = assess(customer_id, txn)
+def assess_and_store(customer_id: str, txn: dict, trace: Trace) -> dict:
+    """Score a stored transaction, get the analyst's view on medium or high, save it, open an alert."""
+    verdict = assess(customer_id, txn) | {"analyst": None}
+    if verdict["band"] != "low":
+        home = db.one("SELECT home_city FROM customers WHERE id = ?", (customer_id,))
+        verdict = fraud_analyst.review(
+            txn, verdict, home["home_city"] if home else "", trace
+        )
     db.execute(
         "UPDATE transactions SET fraud_score = ?, fraud_band = ? WHERE id = ?",
         (verdict["score"], verdict["band"], txn["id"]),
@@ -65,15 +72,13 @@ def assess_and_store(customer_id: str, txn: dict, trace_id: str | None) -> dict:
         alert_id = (
             existing["id"]
             if existing
-            else _open_alert(customer_id, txn, verdict, trace_id)
+            else _open_alert(customer_id, txn, verdict, trace.id)
         )
     logger.info("fraud %s score %.2f %s", txn["id"], verdict["score"], verdict["band"])
     return verdict | {"alert_id": alert_id}
 
 
-def _open_alert(
-    customer_id: str, txn: dict, verdict: dict, trace_id: str | None
-) -> str:
+def _open_alert(customer_id: str, txn: dict, verdict: dict, trace_id: str) -> str:
     alert_id = f"AL-{db.next_counter('alert'):06d}"
     db.execute(
         "INSERT INTO alerts VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -84,7 +89,7 @@ def _open_alert(
             verdict["score"],
             verdict["band"],
             db.dumps(verdict["reasons"]),
-            None,
+            verdict["analyst"],
             "open",
             datetime.now().isoformat(timespec="seconds"),
             trace_id,
