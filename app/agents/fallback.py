@@ -38,7 +38,11 @@ def _not_received(ctx: Ctx, message: str) -> str:
         return "I couldn't find a failed payment in your account. Could you tell me the payee or amount?"
     words = set(re.findall(r"[a-z]{3,}", message.lower())) - {"upi", "payment", "the"}
     # Prefer the payment whose payee the customer named; otherwise the most recent one.
-    named = [p for p in status["payments"] if words & set(re.findall(r"[a-z]{3,}", p["to"].lower()))]
+    named = [
+        p
+        for p in status["payments"]
+        if words & set(re.findall(r"[a-z]{3,}", p["to"].lower()))
+    ]
     payment = (named or status["payments"])[0]
     complaint = registry.execute(ctx, "raise_complaint", {"txn_id": payment["txn_id"]})
     text = (

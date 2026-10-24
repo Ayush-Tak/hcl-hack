@@ -44,7 +44,8 @@ Possible `answer_type` values: `retrieved_fact`, `calculated`, `action_pending`,
 Runs a pending action after the OTP check (6 digits, 5 minutes, 3 attempts).
 
 - `action_completed`: `data` holds the outcome, e.g. `{"card": "XXXX 4821", "status": "BLOCKED", "replacement_id": "RPL-000004"}`. A transfer in cooling-off returns `{"status": "scheduled", "release_at": "..."}`.
-- `refused`: wrong OTP (`data.attempts_left`), expired, out of attempts, or the action isn't this customer's. Unknown IDs and other customers' IDs get the same message, so action IDs can't be probed.
+- `escalated`: a transfer the confirm-time re-check held, because Scam Guard flagged the conversation after the transfer was proposed. `data.status` is `held`, with a `case_id`.
+- `refused`: wrong OTP, expired, locked after 3 wrong codes, or the action isn't this customer's. Unknown IDs and other customers' IDs get the same message, so action IDs can't be probed.
 
 ### `ingest_transaction(customer_id: str, txn: dict) -> dict`
 
