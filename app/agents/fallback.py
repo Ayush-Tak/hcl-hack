@@ -19,6 +19,12 @@ INTENTS = [
     ),
     ("lost_card", r"\b(lost|stolen|missing)\b.*\bcard\b|\bblock\b.*\bcard\b"),
     ("fraud", r"(don'?t|do not) recogni[sz]e|not me|suspicious|fraud|unauthori[sz]ed"),
+    # Both come before "transfer": "still pay my bills" and "asked me to share" aren't payments.
+    ("scam_report", r"(asked|asking|wants?|called|share).{0,40}\b(otp|cvv|pin)\b"),
+    (
+        "affordability",
+        r"\bafford\b|can i buy|still pay (my )?bills|left after|how much will i have",
+    ),
     ("transfer", r"\b(send|transfer|pay)\b"),
     (
         "policy",
@@ -95,8 +101,55 @@ def _fraud(ctx: Ctx, message: str) -> str:
     return text
 
 
+def _scam_report(ctx: Ctx, message: str) -> str:
+    cards = registry.execute(ctx, "get_credit_card_details", {})["cards"]
+    active = [f"{c['type']} card {c['card']}" for c in cards if c["status"] == "ACTIVE"]
+    text = (
+        "Please don't share it. The bank never calls to ask for your OTP, PIN or CVV, so this is "
+        "almost certainly a scam."
+    )
+    if not active:
+        return text
+    return text + (
+        f" If you've already shared it, block your card now. Your active cards: {', '.join(active)}."
+        " Just say 'block my debit card'."
+    )
+
+
+def _affordability(ctx: Ctx, message: str) -> str:
+    balance = registry.execute(ctx, "get_balance", {})["accounts"][0]["balance"]
+    dues = registry.execute(ctx, "get_upcoming_payments", {})
+    amount = _AMOUNT.search(message)
+    spend = int(amount.group(1).replace(",", "")) if amount else 0
+    left = registry.execute(
+        ctx,
+        "calculate",
+        {
+            "expression": f"{balance} - {dues['total_due']} - {spend}",
+            "label": "left after bills and the purchase",
+        },
+    )["value"]
+    text = (
+        f"Your balance is {format_inr(balance)}, and bills, card dues and EMIs due by {dues['until']} "
+        f"come to {format_inr(dues['total_due'])}."
+    )
+    if not spend:
+        return text + f" That leaves {format_inr(int(left))}."
+    if left >= 0:
+        return (
+            text
+            + f" After a {format_inr(spend)} purchase you'd still have {format_inr(int(left))} left."
+        )
+    return (
+        text
+        + f" A {format_inr(spend)} purchase would leave you {format_inr(int(-left))} short."
+    )
+
+
 def _transfer(ctx: Ctx, message: str) -> str:
-    payee, amount = _UPI_ID.search(message), _AMOUNT.search(message)
+    payee = _UPI_ID.search(message)
+    # Look for the amount outside the UPI ID only: in "8949071335@paytm" the digits are a phone number.
+    amount = _AMOUNT.search(message.replace(payee.group(), " ")) if payee else None
     if not payee or not amount:
         return "Who should I send it to (UPI ID) and how much?"
     result = registry.execute(
@@ -137,6 +190,8 @@ HANDLERS = {
     "not_received": _not_received,
     "lost_card": _lost_card,
     "fraud": _fraud,
+    "scam_report": _scam_report,
+    "affordability": _affordability,
     "transfer": _transfer,
     "policy": _policy,
     "balance": _balance,

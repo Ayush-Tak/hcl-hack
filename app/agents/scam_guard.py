@@ -12,9 +12,9 @@ from app.trace import Trace
 
 # Each group is one social-engineering pattern. Two at once, or any "coaching" sign, is high risk.
 SCAM_PATTERNS = {
-    "bank or police impersonation": r"bank (officer|manager|staff)|from the bank|police|cbi|customs|rbi officer",
+    "bank or police impersonation": r"bank (officer|manager|staff|called|rang|phoned)|from the bank|police|cbi|customs|rbi officer",
     "urgency or threats": r"frozen|freeze|blocked today|immediately|urgent|arrest|last chance",
-    "asks for an OTP or code": r"(share|tell|read|give).{0,20}(otp|code|pin)",
+    "asks for an OTP or code": r"(share|tell|read|give|asked for|asking for|wants?).{0,20}(otp|code|pin|cvv)",
     "remote access app": r"anydesk|teamviewer|quick ?support|screen ?shar",
     "KYC update story": r"\bkyc\b",
 }
