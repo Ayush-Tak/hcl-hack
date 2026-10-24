@@ -15,10 +15,13 @@ logger = logging.getLogger(__name__)
 
 OTP_TTL = timedelta(minutes=5)
 MAX_ATTEMPTS = 3
+TOO_MANY_ATTEMPTS = (
+    "Too many wrong codes, so this request is locked. Please ask again for a new code."
+)
 
 # Each executor re-checks its own preconditions, because things can change between
 # proposing the action and confirming it (a card already blocked, a scam flag raised).
-Executor = Callable[[str, dict], dict]
+Executor = Callable[[str, dict, str], dict]
 EXECUTORS: dict[str, Executor] = {}
 
 
@@ -85,6 +88,18 @@ def _claim(action_id: str) -> bool:
         return cur.rowcount == 1
 
 
+def _use_attempt(action_id: str) -> bool:
+    """Count the attempt before comparing, in one statement. If we read the count first,
+    parallel guesses would all see 0 attempts and the 3-try limit wouldn't hold."""
+    with db.connect() as conn:
+        cur = conn.execute(
+            "UPDATE pending_actions SET attempts = attempts + 1 "
+            "WHERE id = ? AND status = 'pending' AND attempts < ?",
+            (action_id, MAX_ATTEMPTS),
+        )
+        return cur.rowcount == 1
+
+
 def _check_otp(action: dict, otp: str) -> str | None:
     if datetime.fromisoformat(action["expires_at"]) < datetime.now():
         db.execute(
@@ -92,21 +107,24 @@ def _check_otp(action: dict, otp: str) -> str | None:
             (action["id"],),
         )
         return "This request has expired. Please ask again and we'll send a new code."
-    if action["attempts"] >= MAX_ATTEMPTS:
-        return "Too many wrong codes. Please ask again and we'll send a new code."
-    if not hmac.compare_digest(
-        action["otp_hash"], _hash_otp(action["id"], otp.strip())
-    ):
+    if not _use_attempt(action["id"]):
+        return TOO_MANY_ATTEMPTS
+    if hmac.compare_digest(action["otp_hash"], _hash_otp(action["id"], otp.strip())):
+        return None
+    used = db.one("SELECT attempts FROM pending_actions WHERE id = ?", (action["id"],))[
+        "attempts"
+    ]
+    left = MAX_ATTEMPTS - used
+    if left == 0:
         db.execute(
-            "UPDATE pending_actions SET attempts = attempts + 1 WHERE id = ?",
+            "UPDATE pending_actions SET status = 'locked' WHERE id = ? AND status = 'pending'",
             (action["id"],),
         )
-        left = MAX_ATTEMPTS - action["attempts"] - 1
-        return f"That code is not right. You have {left} attempt{'s' if left != 1 else ''} left."
-    return None
+        return TOO_MANY_ATTEMPTS
+    return f"That code is not right. You have {left} attempt{'s' if left != 1 else ''} left."
 
 
-def confirm(customer_id: str, action_id: str, otp: str) -> dict:
+def confirm(customer_id: str, action_id: str, otp: str, trace_id: str) -> dict:
     """Returns {"ok": True, "result"} or {"ok": False, "reason"}."""
     action = db.one(
         "SELECT * FROM pending_actions WHERE id = ? AND customer_id = ?",
@@ -115,8 +133,10 @@ def confirm(customer_id: str, action_id: str, otp: str) -> dict:
     # Unknown IDs and other customers' IDs get the same answer, so IDs can't be probed.
     if not action:
         return {"ok": False, "reason": "We couldn't find that request."}
-    if action["status"] in ("done", "scheduled"):
+    if action["status"] in ("done", "scheduled", "held"):
         return {"ok": True, "result": json.loads(action["result"]), "repeat": True}
+    if action["status"] == "locked":
+        return {"ok": False, "reason": TOO_MANY_ATTEMPTS}
     if action["status"] != "pending":
         return {"ok": False, "reason": f"This request is {action['status']}."}
     problem = _check_otp(action, otp)
@@ -124,11 +144,18 @@ def confirm(customer_id: str, action_id: str, otp: str) -> dict:
         return {"ok": False, "reason": problem}
     if not _claim(action_id):
         return {"ok": False, "reason": "This request is already being processed."}
-    result = EXECUTORS[action["type"]](customer_id, json.loads(action["args"]))
+    result = EXECUTORS[action["type"]](
+        customer_id, json.loads(action["args"]), trace_id
+    )
     if result.get("error"):
         status = "failed"
     else:
-        status = "scheduled" if result.get("status") == "scheduled" else "done"
+        # "held" means the confirm-time re-check stopped it; "scheduled" means cooling-off.
+        status = (
+            result.get("status")
+            if result.get("status") in ("scheduled", "held")
+            else "done"
+        )
     db.execute(
         "UPDATE pending_actions SET status = ?, result = ? WHERE id = ?",
         (status, db.dumps(result), action_id),
