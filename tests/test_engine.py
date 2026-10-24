@@ -4,6 +4,7 @@ from app import actions, db, engine, sessions
 from app.agents import verifier
 from app.agents.fraud_analyst import AnalystVerdict
 from app.agents.scam_guard import ScamVerdict
+from app.formatting import format_inr
 from app.tools import registry
 from app.tools.payments import rbi_deadline
 from app.trace import Trace
@@ -153,3 +154,35 @@ def test_policy_search_cites_both_docs_and_refuses_unknown_topics() -> None:
     card = registry.execute(ctx, "search_policy", {"query": "How do I report a card transaction I do not recognise?"})
     assert card["results"][0]["doc"] == "card-disputes"
     assert "not_found" in registry.execute(ctx, "search_policy", {"query": "What is the fee for a duplicate debit card?"})
+
+
+def test_affordability_chip_is_calculated_from_tools() -> None:
+    reply = engine.handle_chat("C1001", "Can I buy a ₹20,000 phone and still pay my bills?", "afford")
+    dues = registry.execute(_ctx(), "get_upcoming_payments", {})["total_due"]
+    assert reply.answer_type == "calculated"
+    assert "calculate" in [t.name for t in reply.tools_invoked]
+    assert format_inr(148_250 - dues - 20_000) in reply.answer
+
+
+def test_bank_asked_for_otp_chip_warns_about_a_scam() -> None:
+    reply = engine.handle_chat("C1001", "The bank called and asked for my OTP", "otp-chip")
+    assert "never calls to ask for your OTP" in reply.answer
+    assert any(w.source == "scam_guard" and w.level == "high" for w in reply.warnings)
+
+
+def test_transfer_amount_is_not_read_from_the_upi_id() -> None:
+    no_amount = engine.handle_chat("C1001", "send money to 8949071335@paytm", "upi-a")
+    assert no_amount.pending_action is None
+    with_amount = engine.handle_chat("C1001", "pay 8949071335@paytm Rs 500", "upi-b")
+    assert with_amount.pending_action.summary.startswith("Send Rs 500 to 8949071335@paytm")
+
+
+def test_scheduled_transfer_checks_the_balance() -> None:
+    too_much = registry.execute(_ctx(), "transfer_money", {"payee": "new.person@okaxis", "amount": 2_00_000})
+    assert "Not enough balance" in too_much["error"]
+    # A cooling-off transfer that fit when proposed, but no longer fits when confirmed.
+    pending = registry.execute(_ctx(), "transfer_money", {"payee": "new.person@okaxis", "amount": 1_00_000})
+    assert pending["decision"] == "cooling_off"
+    db.execute("UPDATE accounts SET balance = 50000 WHERE customer_id = 'C1001'")
+    outcome = actions.confirm("C1001", pending["pending_action"]["action_id"], pending["pending_action"]["demo_otp"], "t")
+    assert not outcome["ok"] and "Not enough balance" in outcome["reason"]
